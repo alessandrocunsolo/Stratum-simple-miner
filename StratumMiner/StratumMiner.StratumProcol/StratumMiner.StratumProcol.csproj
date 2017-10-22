@@ -46,6 +46,7 @@
     <Compile Include="Core\JsonRpcResponse.cs" />
     <Compile Include="Core\JsonRpcBase.cs" />
     <Compile Include="Core\JsonRpcRequest.cs" />
+    <Compile Include="Core\ReceiveResponseEventArgs.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Requests\AuthorizeRequest.cs" />
     <Compile Include="Requests\RequestExtensions.cs" />

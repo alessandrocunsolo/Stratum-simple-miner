@@ -29,6 +29,21 @@ namespace StratumMiner.StratumProcol.Responses
         public string NTime { get; set; }
         public bool CleanJobs { get; set; }
 
+        public static NotifyRequest BuildFrom(JsonRpcRequest request)
+        {
+            
+            var notifyResponse = new NotifyRequest();
+            notifyResponse.JobId = request.Params[0].ToString();
+            notifyResponse.PreviousHash = request.Params[1].ToString();
+            notifyResponse.Coinbase1 = request.Params[2].ToString();
+            notifyResponse.Coinbase2 = request.Params[3].ToString();
+            notifyResponse.MerkleBranch = request.Params[4].ToObject<string[]>();
+            notifyResponse.Version = request.Params[5].ToString();
+            notifyResponse.NBits = request.Params[6].ToString();
+            notifyResponse.NTime = request.Params[7].ToString();
+            notifyResponse.CleanJobs = request.Params[8].ToObject<bool>();
+            return notifyResponse;
+        }
         
     }
 }
