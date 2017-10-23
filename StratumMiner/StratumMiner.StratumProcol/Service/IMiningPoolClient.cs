@@ -11,10 +11,19 @@ namespace StratumMiner.StratumProcol.Service
 {
     public interface IMiningPoolClient
     {
-        JsonRpcResponse Send(JsonRpcRequest request);
+        void OpenConnection();
 
-        SubscribeResponse Subscribe(SubscribeRequest request);
+        void Send(JsonRpcRequest request);
 
-        AuthorizeResponse Authorize(AuthorizeRequest request);
+        void Subscribe(SubscribeRequest request);
+        void Authorize(AuthorizeRequest request);
+        void Share(ShareRequest request);
+
+
+        event EventHandler<ReceiveMessageEventArgs<SubscribeResponse>> OnSubscribeResponse;
+        event EventHandler<ReceiveMessageEventArgs<NotifyRequest>> OnNotifyRequest;
+        event EventHandler<ReceiveMessageEventArgs<SetDifficultyRequest>> OnSetDifficultyRequest;
+        event EventHandler<ReceiveMessageEventArgs<AuthorizeResponse>> OnAuthorizeResponse;
+        event EventHandler<ReceiveMessageEventArgs<ShareResponse>> OnShareResponse;
     }
 }

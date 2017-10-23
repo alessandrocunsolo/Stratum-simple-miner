@@ -11,9 +11,9 @@ namespace StratumMiner.MiningService.ServiceImpl
 {
     public class MiningService
     {
-        public string BuildCoinBase(SubscribeResponse response, NotifyRequest notifyRequest,string extraNonce2)
+        public string BuildCoinBase(string extraNonce1, NotifyRequest notifyRequest,string extraNonce2)
         {
-            var result = notifyRequest.Coinbase1 + response.Extranonce1 + extraNonce2 + notifyRequest.Coinbase2;
+            var result = notifyRequest.Coinbase1 + extraNonce1 + extraNonce2 + notifyRequest.Coinbase2;
 
             return result;
         }
@@ -59,18 +59,18 @@ namespace StratumMiner.MiningService.ServiceImpl
             return listByte;
         }
 
-        public byte[] BuildBlockHeader(SubscribeResponse response,NotifyRequest notifyRequest,string extraNonce2,string nonce)
+        public byte[] BuildBlockHeader(string extraNonce1,NotifyRequest notifyRequest,string extraNonce2,string nonce)
         {
-            var blockHeader = new List<byte>(this.BuildBlockWithoutOnce(response, notifyRequest, extraNonce2));
+            var blockHeader = new List<byte>(this.BuildBlockWithoutOnce(extraNonce1, notifyRequest, extraNonce2));
             blockHeader.AddRange(ConvertHexStringToByte(nonce));
             blockHeader.AddRange(ConvertHexStringToByte("000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000"));
             return blockHeader.ToArray();
         }
-        public byte[] BuildBlockWithoutOnce(SubscribeResponse response, NotifyRequest notifyRequest, string extraNonce2)
+        public byte[] BuildBlockWithoutOnce(string extraNonce1, NotifyRequest notifyRequest, string extraNonce2)
         {
-            var coinBase = this.BuildCoinBase(response, notifyRequest, extraNonce2);
+            var coinBase = this.BuildCoinBase(extraNonce1, notifyRequest, extraNonce2);
             var coinBaseHash = BuildDoubleHash(coinBase);
-            var merkleRoot = this.BuildMerkleRoot(response.Notify.MerkleBranch, coinBaseHash);
+            var merkleRoot = this.BuildMerkleRoot(notifyRequest.MerkleBranch, coinBaseHash);
             var blockHeader = new List<byte>();
             blockHeader.AddRange(ConvertHexStringToByte(notifyRequest.Version));
             blockHeader.AddRange(ConvertHexStringToByte(notifyRequest.PreviousHash));
@@ -80,17 +80,18 @@ namespace StratumMiner.MiningService.ServiceImpl
             return blockHeader.ToArray();
         }
 
-        public string FindOnce(byte[] blockHeaderWithoutOnce,int difficulty, int maxIteration)
+        public string FindNonce(byte[] blockHeaderWithoutOnce,int difficulty, UInt32 maxIteration)
         {
             byte[] nonce;
             var hashTable = new Hashtable();
+            var extraPadding = ConvertHexStringToByte("000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000");
             Parallel.For(0, maxIteration, (i, loopState) =>
             {
                 var zeroCount = 0;
                 nonce = BitConverter.GetBytes(i);
                 var newBlockHeader = new List<byte>(blockHeaderWithoutOnce);
                 newBlockHeader.AddRange(nonce);
-                newBlockHeader.AddRange(ConvertHexStringToByte("000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000"));
+                newBlockHeader.AddRange(extraPadding);
                 var hash = this.BuildDoubleHash(newBlockHeader.ToArray());
                 var reverseHash = hash.Reverse();
                 var equalTozero = true;

@@ -10,6 +10,8 @@ using Newtonsoft.Json;
 using StratumMiner.StratumProcol.Requests;
 using StratumMiner.StratumProcol.Responses;
 using System.Threading;
+using Newtonsoft.Json.Linq;
+using System.Collections;
 
 namespace StratumMiner.StratumProcol.ServiceImpl
 {
@@ -17,92 +19,201 @@ namespace StratumMiner.StratumProcol.ServiceImpl
     {
         private Uri _uri;
         private Socket _socket;
+        private Queue<string> _queue;
+        private Task _queueTask;
+        private object synObject = new object();
+        public event EventHandler<string> OnEnqueMessage;
+        public event EventHandler<ReceiveMessageEventArgs<SubscribeResponse>> OnSubscribeResponse;
+        public event EventHandler<ReceiveMessageEventArgs<NotifyRequest>> OnNotifyRequest;
+        public event EventHandler<ReceiveMessageEventArgs<SetDifficultyRequest>> OnSetDifficultyRequest;
+        public event EventHandler<ReceiveMessageEventArgs<AuthorizeResponse>> OnAuthorizeResponse;
+        public event EventHandler<ReceiveMessageEventArgs<ShareResponse>> OnShareResponse;
 
-        public event EventHandler<ReceiveResponseEventArgs> OnReceiveMessage;
+        private Hashtable _requestTable;
 
+        public bool _stopReceive;
         public SlushMiningPoolClient(Uri uri)
         {
             this._uri = uri;
+            this._queue = new Queue<string>();
+            this._requestTable = new Hashtable();
         }
 
         public void OpenConnection()
         {
             this._socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
             _socket.Connect(_uri.Host, _uri.Port);
+
+            this.OnEnqueMessage += SlushMiningPoolClient_OnEnqueMessage;
+
+            this._queueTask = Task.Factory.StartNew(() =>
+           {
+               this._stopReceive = false;
+               var buffer = new byte[16384];
+               while (!_stopReceive)
+               {
+                   var size = _socket.Receive(buffer);
+                   var validBuffer = buffer;
+                   if (size < buffer.Length)
+                   {
+                       validBuffer = validBuffer.Take(size).ToArray();
+                   }
+
+                   var str = System.Text.Encoding.UTF8.GetString(validBuffer);
+                   var messages = str.Split('\n').Where(m => !string.IsNullOrWhiteSpace(m)).ToArray();
+                   //if (!string.IsNullOrWhiteSpace(messages.Last()))
+                   //{
+
+                   //}
+                   foreach (var item in messages)
+                   {
+                       lock (this.synObject)
+                       {
+                           this._queue.Enqueue(item);
+                       }
+
+                       this.OnEnqueMessage(this, item);
+                   }
+
+
+               }
+
+
+           });
+
+
+
         }
 
-        public JsonRpcResponse Send (JsonRpcRequest request)
-        {
-            var str = this.GetResponse(request);
-            var result = str.Split('\n');
-            var responseObj = JsonConvert.DeserializeObject<JsonRpcResponse>(result[0]);
-            return responseObj;
-        }
 
 
-        
-
-        private string GetResponse(JsonRpcRequest request)
+        public void Send(JsonRpcRequest request)
         {
             var jsonString = JsonConvert.SerializeObject(request);
             var requestText = jsonString + "\n";
             var bytes = System.Text.Encoding.UTF8.GetBytes(requestText);
             var number = _socket.Send(bytes);
-            var dataSize = _socket.Available;
-            while(dataSize == 0)
-            {
-                Thread.Sleep(100);
-                dataSize = _socket.Available;
-            }
-            var buffer = new byte[dataSize];
-            var size = _socket.Receive(buffer);
-            var str = System.Text.Encoding.UTF8.GetString(buffer);
-            return str;
         }
 
-        public SubscribeResponse Subscribe(SubscribeRequest request)
+        public void Authorize(AuthorizeRequest request)
         {
-            var str = this.GetResponse(request);
+            if (!request.Id.HasValue) throw new ArgumentNullException(nameof(request.Id));
+            this._requestTable.Add(request.Id.Value.ToString(), request);
+            this.Send(request);
+        }
+
+        public void Subscribe(SubscribeRequest request)
+        {
+            if (!request.Id.HasValue) throw new ArgumentNullException(nameof(request.Id));
+            this._requestTable.Add(request.Id.Value.ToString(), request);
+            this.Send(request);
+        }
+
+        public void Share(ShareRequest request)
+        {
+            if (!request.Id.HasValue) throw new ArgumentNullException(nameof(request.Id));
+            this._requestTable.Add(request.Id.Value.ToString(), request);
+            this.Send(request);
+        }
+
+
+        private void SlushMiningPoolClient_OnEnqueMessage(object sender, string e)
+        {
             Task.Factory.StartNew(() =>
            {
-               var tempBuffer = new List<Byte>();
-               while (true)
+               var str = "";
+               lock (this.synObject)
                {
-                   
-                   var buffer = new byte[2048];
-                   var size = this._socket.Receive(buffer);
-                   if (size <= buffer.Length)
-                   {
-                       if (tempBuffer.Count > 0)
-                       {
-                           this.RaiseOnReceiveMessage(new ReceiveResponseEventArgs(new List<Byte>(tempBuffer).ToArray()));
-                           tempBuffer.Clear();
-                       }
-                       else
-                       {
-                           this.RaiseOnReceiveMessage(new ReceiveResponseEventArgs(buffer.Take(size).ToArray()));
-                       }
-                       
-                   }
-                   else
-                   {
-                       tempBuffer.AddRange(buffer);
-                   }
-                   
+                   str = this._queue.Dequeue();
                }
+               var jObject = JObject.Parse(str);
+               var id = jObject["id"];
+               if (id != null && this._requestTable.ContainsKey(id.ToString()))
+               {
+                   var request = this._requestTable[id.ToString()];
+                   var reponse = JsonConvert.DeserializeObject<JsonRpcResponse>(str);
+                   if (request is AuthorizeRequest)
+                   {
+                    
+                       var authResponse = AuthorizeResponse.BuildFrom(reponse);
+                       this.RaiseOnAuthorizeResponse(new ReceiveMessageEventArgs<AuthorizeResponse>(authResponse));
+                   }
+                   if (request is SubscribeResponse)
+                   {
+                       var subScribeResponse = SubscribeResponse.BuildFrom(reponse);
+                       this.RaiseOnSubscribeResponse(new ReceiveMessageEventArgs<SubscribeResponse>(subScribeResponse));
+                   }
+                   if (request is ShareResponse)
+                   {
+                       var shareResponse = ShareResponse.BuildFrom(reponse);
+                       this.RaiseOnShareResponse(new ReceiveMessageEventArgs<ShareResponse>(shareResponse));
+                   }
+               }
+               else
+               {
+                   var method = jObject["method"].ToString();
+                   if (!string.IsNullOrWhiteSpace(method))
+                   {
+                       if (method == "mining.notify")
+                       {
+                           var jsonRequest = JsonConvert.DeserializeObject<JsonRpcRequest>(str);
+                           var request = NotifyRequest.BuildFrom(jsonRequest);
+                           this.RaiseOnNotifyRequest(new ReceiveMessageEventArgs<NotifyRequest>(request));
+                       }
+                       if (method == "mining.set_difficulty")
+                       {
+                           var jsonRequest = JsonConvert.DeserializeObject<JsonRpcRequest>(str);
+                           var request = SetDifficultyRequest.BuildFrom(jsonRequest);
+                           this.RaiseOnSetDifficultyRequest(new ReceiveMessageEventArgs<SetDifficultyRequest>(request));
+                       }
+                   }
+               }
+
+
            });
-            return SubscribeResponse.BuildFrom(str);
+
         }
 
-        public void RaiseOnReceiveMessage(ReceiveResponseEventArgs e)
+
+
+        #region Event Raiser
+
+        private void RaiseOnEnqueMessage(string e)
         {
-            this.OnReceiveMessage?.Invoke(this, e);
+            this.OnEnqueMessage?.Invoke(this, e);
         }
 
-        public AuthorizeResponse Authorize(AuthorizeRequest request)
+
+        private void RaiseOnSubscribeResponse(ReceiveMessageEventArgs<SubscribeResponse> e)
         {
-            var response = this.Send(request);
-            return AuthorizeResponse.BuildFrom(response);
+            this.OnSubscribeResponse?.Invoke(this, e);
         }
+        private void RaiseOnNotifyRequest(ReceiveMessageEventArgs<NotifyRequest> e)
+        {
+            this.OnNotifyRequest?.Invoke(this, e);
+        }
+
+        private void RaiseOnSetDifficultyRequest(ReceiveMessageEventArgs<SetDifficultyRequest> e)
+        {
+            this.OnSetDifficultyRequest?.Invoke(this, e);
+        }
+
+        private void RaiseOnAuthorizeResponse(ReceiveMessageEventArgs<AuthorizeResponse> e)
+        {
+            this.OnAuthorizeResponse?.Invoke(this, e);
+        }
+        private void RaiseOnShareResponse(ReceiveMessageEventArgs<ShareResponse> e)
+        {
+            this.OnShareResponse?.Invoke(this, e);
+        }
+
+
+        #endregion
+
+
+
+
+
+
     }
 }

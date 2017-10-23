@@ -25,6 +25,15 @@ namespace StratumMiner.StratumProcol.Responses
 
         public SetDifficultyRequest SetDifficulty { get; set; }
         
+
+        public static SubscribeResponse BuildFrom(JsonRpcResponse jsonResponse)
+        {
+            var instance = new SubscribeResponse(jsonResponse.Id.Value);
+            instance.Extranonce1 = jsonResponse.Result[1].ToString();
+            instance.Extranonce2Size = int.Parse(jsonResponse.Result[2].ToString());
+            return instance;
+        }
+
         public static SubscribeResponse BuildFrom(string responseText)
         {
             var parts = responseText.Split('\n');
