@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using StratumMiner.MiningService.Domain;
 using StratumMiner.MiningService.ServiceImpl;
 using StratumMiner.StratumProcol.Core;
 using StratumMiner.StratumProcol.Requests;
@@ -24,15 +25,9 @@ namespace StratumMiner.ConsoleUI
             //socket.Connect("eu.stratum.slushpool.com", 3333);
             //var jsonString = "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": []}\n";
            
-            var miningService = new MiningService.ServiceImpl.MiningService();
             var uri = new Uri("stratum+tcp://eu.stratum.slushpool.com:3333");
             var client = new SlushMiningPoolClient(uri);
-            SubscribeResponse subscribeResponse = null;
-            var hexString = "1234567890abcdef";
-            var requestIndex = 0;
-            var syncObject = new object();
-
-
+           
             client.OnEnqueMessage += (s, e) =>
               {
                   Console.WriteLine(e);
@@ -47,37 +42,46 @@ namespace StratumMiner.ConsoleUI
 
             var extranonce1 = "";
 
+            var jobManager = JobManager.Instance;
+
+            jobManager.OnJobSuccess += (s, e) =>
+                 {
+                     var shareRequest = new ShareRequest(GetRequestIndex());
+                     shareRequest.Build("acunsolo.acunsolo-worker2", e.Job.JobId, e.Job.ExtraNonce2, e.Job.NTime, e.Job.FoundNonce);
+                     client.Share(shareRequest);
+                 };
+
             client.OnSubscribeResponse += (s, e) =>
             {
                 var response = e.Message;
                 extranonce1 = response.Extranonce1;
+                JobManager.Instance.ExtraNonce1 = extranonce1;
+                JobManager.Instance.SubscribeSuccess();
             };
 
             client.OnNotifyRequest += (s, e) =>
             {
                 Task.Factory.StartNew(() =>
                 {
-                    var request = e.Message;
-                    var nonce = "";
-                    string extraOnce2 = "";
-                    for (UInt32 i = 0; i < UInt32.MaxValue; i++)
+                    if (e.Message.CleanJobs)
+                        JobManager.Instance.ClearAllJob();
+                    if (JobManager.Instance.IsWorkerSubscribed)
                     {
-                        extraOnce2 = miningService.ConvertByteToString(BitConverter.GetBytes(i));
-                        nonce = miningService.FindNonce(miningService.BuildBlockWithoutOnce(extranonce1, request, extraOnce2), 4, UInt32.MaxValue);
-                        if (!string.IsNullOrWhiteSpace(nonce)) break;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(nonce))
-                    {
-                        var shareRequest = new ShareRequest(GetRequestIndex());
-                        shareRequest.Build("acunsolo.acunsolo-worker2", request.JobId, extraOnce2, request.NTime, nonce);
-                        client.Share(shareRequest);
+                        var job = Job.CreateFromRequest(e.Message);
+                        JobManager.Instance.AddJob(job);
                     }
                     
                 });
             };
-
-
+            client.OnSetDifficultyRequest += (s, e) =>
+             {
+                 var message = e.Message;
+                 JobManager.Instance.Difficulty = message.Difficulty;
+             };
+            client.OnAuthorizeResponse += (s, e) =>
+              {
+                  JobManager.Instance.Authorize();
+              };
 
            
             Console.ReadKey();

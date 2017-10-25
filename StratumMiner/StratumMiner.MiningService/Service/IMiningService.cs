@@ -8,6 +8,6 @@ namespace StratumMiner.MiningService.Service
 {
     public class IMiningService
     {
-
+        
     }
 }

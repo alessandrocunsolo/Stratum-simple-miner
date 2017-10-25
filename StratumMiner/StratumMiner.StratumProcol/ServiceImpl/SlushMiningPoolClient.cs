@@ -134,16 +134,15 @@ namespace StratumMiner.StratumProcol.ServiceImpl
                    var reponse = JsonConvert.DeserializeObject<JsonRpcResponse>(str);
                    if (request is AuthorizeRequest)
                    {
-                    
                        var authResponse = AuthorizeResponse.BuildFrom(reponse);
                        this.RaiseOnAuthorizeResponse(new ReceiveMessageEventArgs<AuthorizeResponse>(authResponse));
                    }
-                   if (request is SubscribeResponse)
+                   if (request is SubscribeRequest)
                    {
                        var subScribeResponse = SubscribeResponse.BuildFrom(reponse);
                        this.RaiseOnSubscribeResponse(new ReceiveMessageEventArgs<SubscribeResponse>(subScribeResponse));
                    }
-                   if (request is ShareResponse)
+                   if (request is ShareRequest)
                    {
                        var shareResponse = ShareResponse.BuildFrom(reponse);
                        this.RaiseOnShareResponse(new ReceiveMessageEventArgs<ShareResponse>(shareResponse));

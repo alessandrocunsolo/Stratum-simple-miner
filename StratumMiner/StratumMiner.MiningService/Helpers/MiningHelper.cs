@@ -1,4 +1,5 @@
-﻿using StratumMiner.StratumProcol.Responses;
+﻿using StratumMiner.MiningService.Domain;
+using StratumMiner.StratumProcol.Responses;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -7,26 +8,26 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace StratumMiner.MiningService.ServiceImpl
+namespace StratumMiner.MiningService.Helpers
 {
-    public class MiningService
+    public static class MiningHelper
     {
-        public string BuildCoinBase(string extraNonce1, NotifyRequest notifyRequest,string extraNonce2)
+        public static string BuildCoinBase(string extraNonce1, Job notifyRequest,string extraNonce2)
         {
             var result = notifyRequest.Coinbase1 + extraNonce1 + extraNonce2 + notifyRequest.Coinbase2;
 
             return result;
         }
 
-        public byte[] BuildDoubleHash(string data)
+        public static byte[] BuildDoubleHash(string data)
         {
-            var bytes = this.ConvertHexStringToByte(data);
+            var bytes = ConvertHexStringToByte(data);
 
-            return this.BuildDoubleHash(bytes);
+            return BuildDoubleHash(bytes);
 
         }
 
-        public byte[] ConvertHexStringToByte(string data)
+        public static byte[] ConvertHexStringToByte(string data)
         {
             var chunks = new List<string>();
             var dataCopy = (string)data.Clone();
@@ -39,13 +40,13 @@ namespace StratumMiner.MiningService.ServiceImpl
             return bytes;
         }
 
-        public byte[] BuildDoubleHash(byte[] data)
+        public static byte[] BuildDoubleHash(byte[] data)
         {
             var hasher = SHA256Managed.Create();
             return hasher.ComputeHash(hasher.ComputeHash(data));
         }
 
-        public byte[] BuildMerkleRoot(string[] data, byte[] coinBaseHash)
+        public static byte[] BuildMerkleRoot(string[] data, byte[] coinBaseHash)
         {
             byte[] listByte = coinBaseHash;
             
@@ -59,80 +60,71 @@ namespace StratumMiner.MiningService.ServiceImpl
             return listByte;
         }
 
-        public byte[] BuildBlockHeader(string extraNonce1,NotifyRequest notifyRequest,string extraNonce2,string nonce)
+        public static byte[] BuildBlockHeader(string extraNonce1,Job job,string extraNonce2,string nonce)
         {
-            var blockHeader = new List<byte>(this.BuildBlockWithoutOnce(extraNonce1, notifyRequest, extraNonce2));
+            var blockHeader = new List<byte>(BuildBlockWithoutOnce(extraNonce1, job, extraNonce2));
             blockHeader.AddRange(ConvertHexStringToByte(nonce));
             blockHeader.AddRange(ConvertHexStringToByte("000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000"));
             return blockHeader.ToArray();
         }
-        public byte[] BuildBlockWithoutOnce(string extraNonce1, NotifyRequest notifyRequest, string extraNonce2)
+        public static byte[] BuildBlockWithoutOnce(string extraNonce1, Job job, string extraNonce2)
         {
-            var coinBase = this.BuildCoinBase(extraNonce1, notifyRequest, extraNonce2);
+            var coinBase = BuildCoinBase(extraNonce1, job, extraNonce2);
             var coinBaseHash = BuildDoubleHash(coinBase);
-            var merkleRoot = this.BuildMerkleRoot(notifyRequest.MerkleBranch, coinBaseHash);
+            var merkleRoot = BuildMerkleRoot(job.MerkleBranch, coinBaseHash);
             var blockHeader = new List<byte>();
-            blockHeader.AddRange(ConvertHexStringToByte(notifyRequest.Version));
-            blockHeader.AddRange(ConvertHexStringToByte(notifyRequest.PreviousHash));
+            blockHeader.AddRange(ConvertHexStringToByte(job.Version));
+            blockHeader.AddRange(ConvertHexStringToByte(job.PreviousHash));
             blockHeader.AddRange(merkleRoot.Reverse());
-            blockHeader.AddRange(ConvertHexStringToByte(notifyRequest.NTime));
-            blockHeader.AddRange(ConvertHexStringToByte(notifyRequest.NBits));
+            blockHeader.AddRange(ConvertHexStringToByte(job.NTime));
+            blockHeader.AddRange(ConvertHexStringToByte(job.NBits));
             return blockHeader.ToArray();
         }
 
-        public string FindNonce(byte[] blockHeaderWithoutOnce,int difficulty, UInt32 maxIteration)
+        public static string FindNonce(byte[] blockHeaderWithoutOnce,int difficulty, UInt32 maxIteration, UInt256 targetDiff)
         {
             byte[] nonce;
             var hashTable = new Hashtable();
             var extraPadding = ConvertHexStringToByte("000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000");
+
+            //var targetDiff = DifficultyToTarget(difficulty);
+
+            var foundNone = "";
             Parallel.For(0, maxIteration, (i, loopState) =>
             {
-                var zeroCount = 0;
-                nonce = BitConverter.GetBytes(i);
+                nonce = BitConverter.GetBytes(i).Take(4).ToArray();
+                
                 var newBlockHeader = new List<byte>(blockHeaderWithoutOnce);
                 newBlockHeader.AddRange(nonce);
                 newBlockHeader.AddRange(extraPadding);
-                var hash = this.BuildDoubleHash(newBlockHeader.ToArray());
-                var reverseHash = hash.Reverse();
-                var equalTozero = true;
-
-                foreach (var item in reverseHash)
+                var hash = BuildDoubleHash(newBlockHeader.ToArray());
+                var str = ConvertByteToString(hash);
+                
+                //verify difficulty
+                var hashUint256 = new UInt256(hash);
+                
+                if (hashUint256.CompareTo(targetDiff) <=0 || str.StartsWith("0000"))
                 {
-                    if (item == 0 && equalTozero)
-                    {
-                        zeroCount += 1;
-                        continue;
-                    }
-                    break;
-                }
-                if (zeroCount >= difficulty)
-                {
-                    var nonceKey = ConvertByteToString(nonce);
-                    if (!hashTable.ContainsKey(nonceKey))
-                    {
-                        hashTable.Add(nonceKey, zeroCount);
-                    }
+                    Console.WriteLine(str);
+                    foundNone = ConvertByteToString(nonce);
                     loopState.Break();
                 }
                 
 
             });
-            var maxCount = 0;
-            var maxNonce = "";
-            foreach (var key in hashTable.Keys)
-            {
-                var value = (int)hashTable[key];
-                if (value > maxCount)
-                {
-                    maxCount = value;
-                    maxNonce =(string)key;
-                }
-            }
 
-            return maxNonce;
+            return foundNone;
 
         }
-        public byte[] GetNonce()
+
+        public static UInt256 DifficultyToTarget(int difficulty)
+        {
+            var diff1 = UInt256.Parse("00000000ffff0000000000000000000000000000000000000000000000000000");
+            var uint256Diff = new UInt256(BitConverter.GetBytes(difficulty));
+            return diff1 / uint256Diff;
+        }
+
+        public static byte[] GetNonce()
         {
             var random = new Random();
             var bytes = new byte[4];
@@ -142,17 +134,18 @@ namespace StratumMiner.MiningService.ServiceImpl
             //var bytes = BuildDoubleHash(blockHeader);
             //return bytes.Take(4).ToArray();
         }
-        public string GetNonceString()
+        public static string GetNonceString()
         {
             var hexString = "1234567890abcdef";
             var random = new Random();
             return new string(hexString.OrderBy(x => random.Next(int.MaxValue)).Take(8).ToArray());
         }
 
-        public string ConvertByteToString(byte[] bytes)
+        public static string ConvertByteToString(byte[] bytes)
         {
             var stringBuilder = new StringBuilder();
-            foreach (var item in bytes)
+            var reversedBytes = bytes.Reverse();
+            foreach (var item in reversedBytes)
             {
                 stringBuilder.AppendFormat("{0:x2}", item);
             }
